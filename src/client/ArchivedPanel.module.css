@@ -157,8 +157,9 @@
   color: var(--dsw-alias-state-error-primary, #e5484d);
 }
 
+/* hover 与官方危险操作按钮一致：中性 hover 背景 + 红色文字，不铺红色底。 */
 .dangerButton:hover:not(:disabled) {
-  background: var(--dsw-alias-state-error-secondary, rgba(214, 69, 69, 0.12));
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-state-error-primary, #e5484d);
 }
 

@@ -36,6 +36,11 @@ interface RpcError {
   details: Record<string, unknown>
 }
 
+/** cordis 事件总线（emit workspace/session-deleted 让官方帧链路广播 host/session-removed）。 */
+interface EventBusLike {
+  emit(event: string, ...args: unknown[]): unknown
+}
+
 /** RPC 成功/失败结果。 */
 type RpcResult<T> = { ok: true; value: T } | { ok: false; error: RpcError }
 
@@ -62,6 +67,8 @@ interface PersistenceLike {
 interface SessionsLike {
   get(sessionId: SessionId): unknown
   flush?(session: unknown): Promise<void>
+  /** SessionStore 内部 store（entry.detach 触发 session/disposed → host/session-removed）。 */
+  store?: Map<SessionId, { detach: () => void }>
 }
 
 interface AgentsLike {
@@ -142,6 +149,24 @@ async function deleteSession(ctx: Context, sessionId: SessionId): Promise<RpcRes
   }
 
   await deletePersisted(persistence, sessionId)
+
+  // 官方删除链路靠 session/disposed（或 workspace/session-deleted）→
+  // host/session-removed 帧把浏览器摘要移除；我们的 /dsh-qol RPC 不走官方
+  // apiproxy，必须自己触发。摘除 live 实例同时解决 host 侧 session.list
+  // 的 live 分支残留（否则刷新页面幽灵复活）。失败不阻断 RPC——界面在
+  // 下次 refresh 时会对齐。
+  try {
+    const sessions = ctx.get('sessions') as SessionsLike | undefined
+    const entry = sessions?.store?.get(sessionId)
+    if (entry !== undefined) entry.detach()
+  } catch {
+    // 忽略摘除失败
+  }
+  try {
+    ;(ctx as unknown as EventBusLike).emit('workspace/session-deleted', sessionId)
+  } catch {
+    // 忽略广播失败
+  }
   return { ok: true, value: archivedSet(registry) }
 }
 

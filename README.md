@@ -57,6 +57,13 @@ harness 侧的一处小补丁（纯增量，不改任何既有行为）：
    `{sessionId}` / `{archivedSessionIds}` 形状），宿主流新增
    `workspace/session-deleted` 监听 → 广播 `host/session-removed`（会话摘要
    移除帧；归档集与工作区帧由既有 `domain/changed` 通道自动广播）。
+
+> **dsh-qol 自己的删除路径**：`/dsh-qol` 的 `workspace.deleteSession` 在
+> 删完文件后，还会（1）从 `sessions` 的 live store 里 detach 该会话实例
+> （触发 `session/disposed` → `host/session-removed`），（2）emit
+> `workspace/session-deleted` 兜底广播。这两步缺一不可：只删文件/记账
+> 会让 live 实例残留在内存里，`session.list` 的 attached 分支继续返回它，
+> 侧栏把它显示在「未分组」——刷新页面也无法消除。
 5. `@deepseek-ai/dsh-client-connection`：值 schema 表、`api.workspace`
    方法与 fixture 分发各加两项。
 6. `@deepseek-ai/dsh-client-runtime`：`WorkspaceManager` 与 `WorkspaceRuntime`
