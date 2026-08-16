@@ -109,15 +109,19 @@ function showExportDialog(filename: string, t: TranslateNS<'qol'>): void {
   renderDialog(t)
 }
 
-/** 触发一次浏览器下载。 */
-function download(content: string, filename: string): void {
-  const blob = new Blob([content], { type: 'application/x-ndjson;charset=utf-8' })
+/** 触发一次浏览器下载（保存一个已就绪的 Blob）。 */
+function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
   anchor.click()
   URL.revokeObjectURL(url)
+}
+
+/** 触发一次浏览器下载（单会话：明文 JSONL）。 */
+function download(content: string, filename: string): void {
+  downloadBlob(new Blob([content], { type: 'application/x-ndjson;charset=utf-8' }), filename)
 }
 
 /**
@@ -147,7 +151,8 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
 }
 
 /**
- * 监听官方补丁派发的工作区导出事件并导航到下载路由。
+ * 监听官方补丁派发的工作区导出事件：fetch 整个 ZIP，等响应体完整拿到
+ * （即文件确实生成完毕）才触发保存并弹成功窗；网络或宿主错误走 Toast。
  * @param t - 本插件字典的翻译函数（qol 命名空间）。
  * @returns 取消监听的 disposer。
  */
@@ -157,12 +162,24 @@ export function bindExportWorkspace(t: TranslateNS<'qol'>): () => void {
     if (typeof workspaceId !== 'string' || workspaceId.length === 0) return
     const url = new URL(WORKSPACE_EXPORT_PATH, window.location.origin)
     url.searchParams.set('workspaceId', workspaceId)
-    const anchor = document.createElement('a')
-    anchor.href = url.toString()
-    anchor.rel = 'noopener'
-    anchor.click()
-    // 浏览器原生下载没有完成回调，ZIP 命名规则与宿主一致，弹窗展示文件名。
-    showExportDialog(`dsh-workspace-${workspaceId}.zip`, t)
+    showToast(t('export.workspace.start'))
+    void (async () => {
+      try {
+        const response = await fetch(url.toString())
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '')
+          throw new Error(`HTTP ${response.status}${detail === '' ? '' : ` ${detail}`}`)
+        }
+        const blob = await response.blob()
+        if (blob.size === 0) throw new Error('empty archive')
+        const filename = `dsh-workspace-${workspaceId}.zip`
+        downloadBlob(blob, filename)
+        showExportDialog(filename, t)
+      } catch (reason: unknown) {
+        const message = reason instanceof Error ? reason.message : String(reason)
+        showToast(t('export.error', { message }))
+      }
+    })()
   }
   window.addEventListener(EXPORT_WORKSPACE_EVENT, listener)
   return () => { window.removeEventListener(EXPORT_WORKSPACE_EVENT, listener) }
