@@ -73,7 +73,6 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
   const listener = (event: Event): void => {
     const sessionId = (event as CustomEvent).detail
     if (typeof sessionId !== 'string' || sessionId.length === 0) return
-    showToast(t('export.workspace.start'))
     void callRpc<ExportJsonlValue>('session.exportJsonl', { sessionId })
       .then(({ content }) => {
         // sessionId 自带 `session-` 前缀，文件名去掉它，避免 dsh-session-session-… 的重复。
