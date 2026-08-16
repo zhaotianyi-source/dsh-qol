@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import {
-  deletePersisted, deleteSession, exportJsonl, unarchiveSession,
+  deletePersisted, deleteSession, unarchiveSession,
   type PersistenceLike, type SessionsLike, type WorkspaceLike, type WorkspaceRegistryLike,
 } from '../src/ops.ts'
 
@@ -163,34 +163,6 @@ describe('deleteSession', () => {
     await deleteSession({ registry, persistence, sessions, emit }, sid('a'))
     expect(order[0]).toBe('detach')
     expect(order[1]).toBe('emit:workspace/session-deleted')
-  })
-})
-
-describe('exportJsonl', () => {
-  it('returns the raw artifact when the backend supports it', async () => {
-    const persistence = persistenceOf()
-    persistence.readRaw = vi.fn(async () => ({ filename: 'session.jsonl', content: '{"type":"session"}\n' }))
-    const result = await exportJsonl(persistence, sid('a'))
-    expect(result).toEqual({
-      ok: true,
-      value: { filename: 'session.jsonl', content: '{"type":"session"}\n' },
-    })
-  })
-
-  it('reports export-unsupported when readRaw is absent', async () => {
-    const persistence = persistenceOf()
-    delete (persistence as { readRaw?: unknown }).readRaw
-    const result = await exportJsonl(persistence, sid('a'))
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.code).toBe('export-unsupported')
-  })
-
-  it('reports session-not-found for a missing artifact', async () => {
-    const persistence = persistenceOf()
-    persistence.readRaw = vi.fn(async () => undefined)
-    const result = await exportJsonl(persistence, sid('a'))
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.code).toBe('session-not-found')
   })
 })
 

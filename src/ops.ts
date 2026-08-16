@@ -1,5 +1,5 @@
 /**
- * dsh-qol 宿主半核心操作：恢复 / 删除 / 导出的纯逻辑。
+ * dsh-qol 宿主半核心操作：恢复 / 删除的纯逻辑。
  *
  * 所有函数只依赖显式传入的服务对象（workspace registry / session
  * persistence / sessions store / agents / 事件总线），不接触 cordis
@@ -36,8 +36,6 @@ export interface PersistenceLike {
   list(): Promise<readonly { id: SessionId; cwd?: string }[]>
   locate(meta: { id: SessionId; cwd?: string }): { path: string } | undefined
   delete?(sessionId: SessionId): Promise<boolean>
-  /** 读会话原始产物（JSONL 后端返回 zstd 解码后的明文）。 */
-  readRaw?(sessionId: SessionId, signal?: AbortSignal): Promise<{ filename: string; content: string } | undefined>
 }
 
 /** SessionStore 上我们会用到的面。 */
@@ -157,35 +155,6 @@ export async function deleteSession(
 
   await deletePersisted(persistence, sessionId)
   return { ok: true, value: archivedSet(registry) }
-}
-
-/** 导出会话原始日志（JSONL 明文）。 */
-export async function exportJsonl(
-  persistence: PersistenceLike,
-  sessionId: SessionId,
-): Promise<RpcResult<{ filename: string; content: string }>> {
-  if (typeof persistence.readRaw !== 'function') {
-    return {
-      ok: false,
-      error: {
-        code: 'export-unsupported',
-        message: 'this session persistence backend does not expose raw artifacts',
-        details: { sessionId },
-      },
-    }
-  }
-  const artifact = await persistence.readRaw(sessionId)
-  if (artifact === undefined) {
-    return {
-      ok: false,
-      error: {
-        code: 'session-not-found',
-        message: `cannot export session '${sessionId}': no stored session log`,
-        details: { sessionId },
-      },
-    }
-  }
-  return { ok: true, value: { filename: artifact.filename, content: artifact.content } }
 }
 
 /** 会话是否 live / 已持久化。 */

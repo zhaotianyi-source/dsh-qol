@@ -26,7 +26,6 @@ export type QolKey =
   | 'archived.time.months'
   | 'archived.time.years'
   | 'archived.close'
-  | 'export.error'
 
 export const zh: Record<QolKey, string> = {
   'archived.button': '归档',
@@ -51,7 +50,6 @@ export const zh: Record<QolKey, string> = {
   'archived.time.months': '{n} 个月前',
   'archived.time.years': '{n} 年前',
   'archived.close': '关闭',
-  'export.error': '导出失败：{message}',
 }
 
 export const en: Record<QolKey, string> = {
@@ -77,5 +75,4 @@ export const en: Record<QolKey, string> = {
   'archived.time.months': '{n} months ago',
   'archived.time.years': '{n} years ago',
   'archived.close': 'Close',
-  'export.error': 'Export failed: {message}',
 }

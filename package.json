@@ -1,7 +1,7 @@
 {
   "name": "dsh-qol",
   "version": "0.1.0",
-  "description": "DSH 体验优化合集：归档会话管理、对话导出（JSONL）、工作区导出（ZIP）。",
+  "description": "DSH 体验优化合集：归档会话管理（归档列表 / 恢复 / 删除）。",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -62,7 +62,6 @@
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-layout": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
@@ -87,8 +86,5 @@
     "unrun": "^0.3.1",
     "vitest": "^4.1.8"
   },
-  "packageManager": "pnpm@10.33.2+sha512.a90faf6feeab71ad6c6e57f94e0fe1a12f5dcc22cd754db40ae9593eb6a3e0b6b12e3540218bb37ae083404b1f2ce6db2a4121e979829b4aff94b99f49da1cf8",
-  "dependencies": {
-    "fflate": "^0.8.3"
-  }
+  "packageManager": "pnpm@10.33.2+sha512.a90faf6feeab71ad6c6e57f94e0fe1a12f5dcc22cd754db40ae9593eb6a3e0b6b12e3540218bb37ae083404b1f2ce6db2a4121e979829b4aff94b99f49da1cf8"
 }

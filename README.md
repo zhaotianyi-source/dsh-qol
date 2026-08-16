@@ -1,6 +1,6 @@
 # dsh-qol
 
-> DSH 体验优化合集：归档管理、对话导出、工作区导出。
+> DSH 体验优化合集：归档会话管理。
 > 基于 DeepSeek Harness 官方 Web 客户端构建，插件 ID `dsh-qol`。
 
 [English](README.en.md)
@@ -20,33 +20,18 @@ DSH 的「归档」是单向操作：归档后的会话会从所有列表面消�
   工作区记账槽与归档集成员资格；运行中的会话会被拒绝（`session-live`）。
   删除完成后立即从所有列表消失，且不会留下残留条目。
 
-### 对话导出（JSONL）
-
-会话行 `···` 菜单（「分叉」与「归档」之间）新增「导出对话」：把该会话的
-原始日志导出为明文 JSONL（`session.jsonl.zstd` 解码后的存储原文，
-逐字节对应磁盘产物），经浏览器保存对话框下载为
-`dsh-session-<id>.jsonl`。
-
-### 工作区导出（ZIP）
-
-工作区行 `···` 菜单新增「导出工作区对话」：把该工作区下所有会话的明文
-JSONL 打包为一个 ZIP（每个会话一个 `<sessionId>/session.jsonl` 条目，
-与官方 `session.export` 的目录布局一致），经浏览器保存对话框下载为
-`dsh-workspace-<workspaceId>.zip`。
-
 ## 架构
 
 ```
 src/
 ├── index.ts                    # 包入口（re-export 宿主半）
-├── host.ts                     # 宿主半：/dsh-qol RPC（恢复/删除/导出）
-├── workspaceExport.ts          # 宿主半：工作区 ZIP 打包（webServer 路由）
+├── host.ts                     # 宿主半：/dsh-qol RPC（恢复/删除）
+├── ops.ts                      # 宿主半核心逻辑（纯函数，可单测）
 ├── cordis.patch.yml            # bundle patch：插入宿主插件行
 └── client/
-    ├── index.ts                # 浏览器半入口：字典 + 事件监听 + 侧栏注册
+    ├── index.ts                # 浏览器半入口：字典 + 侧栏注册
     ├── ArchivedPanel.tsx       # 归档面板（恢复 / 删除）
     ├── ArchivedPanel.module.css
-    ├── exportSession.tsx       # 导出监听（会话 JSONL / 工作区 ZIP）
     ├── locales.ts              # zh / en 文案（qol 命名空间）
     ├── rpc.ts                  # 信封协议直调宿主 RPC
     └── css-modules.d.ts
@@ -55,39 +40,33 @@ src/
 ### 宿主半
 
 `host.ts` 通过 `/dsh-qol` RPC 通道接管官方 rc.6 缺失的能力：
-`workspace.unarchiveSession`、`workspace.deleteSession`、
-`session.exportJsonl`。删除走完整链路：拒绝运行中会话 → flush →
-移除帧先广播（`host/session-removed`）→ 清归档集 → 摘记账 →
-删日志文件，保证浏览器侧不会短暂看到残留条目。
-
-`workspaceExport.ts` 注册 `GET /dsh-qol/workspace.export?workspaceId=…`
-路由，用 fflate 流式打包 ZIP：逐个会话 `readRaw`（zstd 解码后的明文），
-同一时刻只持有一个会话的文本，内存占用有界。
+`workspace.unarchiveSession`、`workspace.deleteSession`。核心逻辑在
+`ops.ts`，以服务对象为参数的纯函数（可单测）；删除走完整链路：
+拒绝运行中会话 → flush → 移除帧先广播（`host/session-removed`）→
+清归档集 → 摘记账 → 删日志文件，保证浏览器侧不会短暂看到残留条目。
 
 ### 浏览器半
 
-`client/` 通过 `sidebar.footer.action` 槽注册归档面板；导出菜单项由官方
-补丁派发自定义事件（`dsh-qol:export-session` / `dsh-qol:export-workspace`），
-浏览器半监听后经 RPC 或导航执行下载，失败以 Toast 反馈。
+`client/` 通过 `sidebar.footer.action` 槽注册归档面板。数据走框架全局
+钩子（`useSessions` / `useWorkspaces`），操作走宿主 RPC 直调
+（`workspace.unarchiveSession` / `workspace.deleteSession`）；UI 状态
+同步由宿主帧机制自动完成。
 
 ## 运行时补丁
 
-dsh-qol 不修改官方 API 包，只对官方 UI bundle 做两处最小增量补丁
-（无 slot 扩展点，纯插入，不改既有行为）：
+dsh-qol 不修改官方 API 包，只对官方 host 包做一处最小增量补丁
+（纯增量，不改既有行为）：
 
 | 位置 | 补丁内容 |
 | --- | --- |
-| `dsh-client-ui-workspace` | 会话行菜单插入「导出对话」（分叉与归档之间）；工作区行菜单插入「导出工作区对话」；点击派发对应自定义事件 |
 | `dsh-host-apiproxy` | 宿主流新增 `workspace/session-deleted` 监听 → 广播 `host/session-removed`（会话摘要移除帧） |
 
 补丁同时落在两处（内容一致）：
 
 - **已打包运行时**：`<桌面应用>/resources/app/node_modules/@deepseek-ai/*`
-  （改完重启桌面应用生效；`dsh-client-ui-workspace` 的浏览器 bundle 由
-  `dsh-client-modules` 直接 serve `lib/client.js`，改完重启 DSH 即生效，
-  无需重建 Web 产物）。
-- **源码 checkout**：`deepseek-harness/packages/*`（`Rows.tsx`、
-  `locales.ts`、`api-proxy.ts`）同步修改保持一致。
+  （改完重启桌面应用生效）。
+- **源码 checkout**：`deepseek-harness/packages/*`（`api-proxy.ts`）
+  同步修改保持一致。
 
 ## 安装与构建
 
@@ -117,10 +96,6 @@ pnpm test           # vitest
   闭包工厂 + 平台模块 external，见 `tsdown.config.ts`）。
 - 新增 RPC 经 `src/client/rpc.ts` 以公开信封协议直调（浏览器运行时无需
   对应客户端方法，宿主帧机制负责状态同步）。
-- 导出菜单项补丁与 harness 源码保持同步（见上）。
-- 反馈 Toast 遵循官方模式：`shell.overlay` 槽组件内部 `useState` 渲染
-  框架 primitives（先例：ui-model-selection 的 ModelSelect），不手写
-  `createRoot` / 手动挂 DOM。
 
 ## 测试
 
@@ -128,10 +103,8 @@ pnpm test           # vitest
 pnpm test           # vitest（node 环境 + 组件 spec 的 jsdom pragma）
 ```
 
-- `test/ops.test.ts`：宿主半纯逻辑（恢复 / 删除 / 导出），假服务对象驱动，
+- `test/ops.test.ts`：宿主半纯逻辑（恢复 / 删除），假服务对象驱动，
   覆盖运行中拒绝、未知会话、帧顺序（移除帧先于归档 / 记账）、后端删兜底。
-- `test/workspace-export.test.ts`：ZIP 打包（fflate 解包验证条目布局）、
-  缺失日志跳过、未知工作区、路径段消毒。
 - `test/archived-panel.test.tsx`：组件 spec（jsdom + @testing-library/react），
   props 直喂断言可见行为：按钮、空态、列表、恢复、两步删除、错误横幅。
 - `test/rpc.test.ts`：信封协议形状、业务错误、HTTP 404 映射、传输失败。
@@ -146,9 +119,7 @@ pnpm test           # vitest（node 环境 + 组件 spec 的 jsdom pragma）
 - 删除只拒绝**正在运行**的会话；闲置会话可直接删除。删除后若继续向
   该会话发送消息，会得到「session not found」错误，不会复活文件。
 - 若 `sessionPersistence` 换为非 JSONL 后端，删除会得到
-  「backend does not support session deletion」错误，恢复与导出仍可用。
-- 导出经浏览器保存对话框下载：JS 无法感知下载完成，因此没有成功提示；
-  仅失败时 Toast 报错。
+  「backend does not support session deletion」错误，恢复仍可用。
 
 ## Model Experience
 
@@ -172,5 +143,4 @@ pnpm test           # vitest（node 环境 + 组件 spec 的 jsdom pragma）
 
 ## Known Limitations and Deferred Work
 
-见上方「已知限制」。导出菜单项依赖官方 `dsh-client-ui-workspace` 的最小
-补丁（无 slot 扩展点）；若官方未来为行菜单提供 slot，应迁移以移除补丁。
+见上方「已知限制」。

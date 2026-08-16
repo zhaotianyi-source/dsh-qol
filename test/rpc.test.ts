@@ -60,15 +60,15 @@ describe('callRpc', () => {
   it('throws a transport error when fetch rejects', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('boom') }))
 
-    await expect(callRpc('session.exportJsonl', { sessionId: 's' }))
-      .rejects.toThrow(/RPC session.exportJsonl transport failed/)
+    await expect(callRpc('workspace.deleteSession', { sessionId: 's' }))
+      .rejects.toThrow(/RPC workspace.deleteSession transport failed/)
   })
 
   it('rethrows cancellation as "cancelled"', async () => {
     const controller = new AbortController()
     vi.stubGlobal('fetch', vi.fn(async () => { throw new DOMException('aborted', 'AbortError') }))
 
-    const promise = callRpc('session.exportJsonl', { sessionId: 's' }, controller.signal)
+    const promise = callRpc('workspace.deleteSession', { sessionId: 's' }, controller.signal)
     controller.abort()
     await expect(promise).rejects.toThrow('cancelled')
   })
