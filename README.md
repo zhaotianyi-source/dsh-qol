@@ -1,107 +1,95 @@
-# dsh-qol · DSH 体验优化合集
+# dsh-qol
 
-DeepSeek Harness 官方插件，把高频体验痛点的修补收进一个合集。插件 ID：
-`dsh-qol`，展示名：**DSH 体验优化合集**。
+> DSH 体验优化合集：归档管理、对话导出、工作区导出。
+> 基于 DeepSeek Harness 官方 Web 客户端构建，插件 ID `dsh-qol`。
 
-## 能力
+[English](README.en.md)
 
-### 归档会话管理（V1）
+## 功能
 
-DSH 的「归档」是单向的：`workspace.archiveSession` 把会话藏进
-registry-global 归档集，从此任何列表面都看不到它——没有归档入口，没有
-恢复，也没有删除，日志永久留在磁盘上。dsh-qol 补上这整条回路：
+### 归档会话管理
 
-- **归档入口**：侧栏底部新增「归档」按钮（`sidebar.footer.action` 槽），
-  点击打开归档会话面板。
-- **归档列表**：面板按最近更新排序列出全部已归档会话（标题 / 所属工作区
-  / 相对时间），数据来自框架全局钩子（`useSessions` + `useWorkspaces`），
-  与主列表同源、实时联动。
-- **打开**：直接跳转到该会话的对话视图（`sessions.open`）。
-- **恢复（取消归档）**：`workspace.unarchiveSession`——归档从不触碰工作区
-  记账槽，恢复后回到原位置。
-- **删除**：`workspace.deleteSession`——两次点击确认（4 秒自动复位），
-  永久删除：会话日志文件 + 工作区记账槽 + 归档集成员资格。运行中的会话
-  会被宿主拒绝（`session-live`）。
+DSH 的「归档」是单向操作：归档后的会话会从所有列表面消失，但官方
+没有提供归档入口、恢复或删除，日志会永久留在磁盘上。dsh-qol 补全
+这条回路：
 
-### 导出对话 JSONL（V2）
+- **归档入口**：侧栏底部「归档」按钮（`sidebar.footer.action` 槽），
+  点击打开归档面板，按最近更新列出全部已归档会话。
+- **恢复**：一键恢复，会话回到原工作区位置（归档不触碰记账槽）。
+- **删除**：两步确认（点「删除」→「确定」），永久删除会话日志文件、
+  工作区记账槽与归档集成员资格；运行中的会话会被拒绝（`session-live`）。
+  删除完成后立即从所有列表消失，且不会留下残留条目。
 
-会话行 `···` 菜单在「分叉」与「归档」之间新增「导出对话」：把该会话的
-原始日志（`session.jsonl.zstd` 解码后的明文 JSONL，逐字节对应磁盘产物）
-下载为 `dsh-session-<id>.jsonl`。导出走宿主 RPC `session.exportJsonl`，
-复用官方 `SessionPersistence.readRaw`（rc.6 已实现 zstd 解码），无需
-自行解压。
+### 对话导出（JSONL）
 
-菜单项本身是官方 `dsh-client-ui-workspace` 的一处**最小补丁**（无 slot
-扩展点）：在 `sessionMenuItems` 里插入 export 项，点击时派发
-`dsh-qol:export-session` 自定义事件；dsh-qol 浏览器半监听该事件执行
-RPC + Blob 下载，失败以 Toast 反馈。补丁与源码 checkout 同步（见下）。
+会话行 `···` 菜单（「分叉」与「归档」之间）新增「导出对话」：把该会话的
+原始日志导出为明文 JSONL（`session.jsonl.zstd` 解码后的存储原文，
+逐字节对应磁盘产物），经浏览器保存对话框下载为
+`dsh-session-<id>.jsonl`。
 
-### 导出工作区 ZIP（V3）
+### 工作区导出（ZIP）
 
-工作区行 `···` 菜单新增「导出工作区」：把该工作区记账下所有会话的
-明文 JSONL 打包成一个 ZIP（每个会话一个 `<sessionId>/session.jsonl`
-条目，与官方 session.export 的目录布局一致）流式下发，文件名
+工作区行 `···` 菜单新增「导出工作区对话」：把该工作区下所有会话的明文
+JSONL 打包为一个 ZIP（每个会话一个 `<sessionId>/session.jsonl` 条目，
+与官方 `session.export` 的目录布局一致），经浏览器保存对话框下载为
 `dsh-workspace-<workspaceId>.zip`。
 
-实现走宿主侧 `webServer` 注册的 GET 路由
-`/dsh-qol/workspace.export?workspaceId=…`（与官方 `/api/session.export`
-同款：`content-disposition` 触发下载，浏览器原生处理，无需把整个 ZIP
-拉进内存）；打包用 fflate 流式 Zip API，同一时刻只持有一个会话的
-artifact 文本。工作区行菜单项同样是官方 `dsh-client-ui-workspace` 的
-最小补丁（`workspaceMenuItems` 插入 export 项 → 派发
-`dsh-qol:export-workspace` 事件 → 浏览器半导航到下载路由）。
+## 架构
 
-## 前置条件：harness API 扩展（必须）
+```
+src/
+├── index.ts                    # 包入口（re-export 宿主半）
+├── host.ts                     # 宿主半：/dsh-qol RPC（恢复/删除/导出）
+├── workspaceExport.ts          # 宿主半：工作区 ZIP 打包（webServer 路由）
+├── cordis.patch.yml            # bundle patch：插入宿主插件行
+└── client/
+    ├── index.ts                # 浏览器半入口：字典 + 事件监听 + 侧栏注册
+    ├── ArchivedPanel.tsx       # 归档面板（恢复 / 删除）
+    ├── ArchivedPanel.module.css
+    ├── exportSession.tsx       # 导出监听（会话 JSONL / 工作区 ZIP）
+    ├── locales.ts              # zh / en 文案（qol 命名空间）
+    ├── rpc.ts                  # 信封协议直调宿主 RPC
+    └── css-modules.d.ts
+```
 
-`unarchiveSession` / `deleteSession` 不在 rc.6 的 RPC 面里，本插件依赖
-harness 侧的一处小补丁（纯增量，不改任何既有行为）：
+### 宿主半
 
-1. `@deepseek-ai/dsh-workspace`：registry 新增 `unarchiveSession(sessionId)`
-   与 `deleteSession(sessionId)`——只拒绝**正在运行**的会话
-   （`agent.status === 'running'`）；删除前先经 `session/flush` 屏障排空
-   闲置实例的挂起写，再摘除记账、清归档集、走 `sessionPersistence.delete`
-   删日志。新增 `WorkspaceLiveSessionError`。
-2. `@deepseek-ai/dsh-session-persistence`：`PersistenceCoordinator.forget(id)`
-   清理删除会话的写状态 / 预读缓存 / 串行链，并摘除 live-but-idle 的写路径
-   （删除后旧实例继续写会得到明确的 "session not found"，不会复活文件）；
-   `SessionPersistence` 基类新增默认 `delete(id)`（无逐会话产物的后端抛不支持）。
-3. `@deepseek-ai/dsh-session-persistence-jsonl`：实现 `delete(id)`——定位日志
-   文件，删文件 + 删所属会话目录（含 `.corrupt-bak` 等恢复备份），再 forget。
-4. `@deepseek-ai/dsh-host-apiproxy`：`workspace.unarchiveSession` /
-   `workspace.deleteSession` 两个 RPC（请求/响应复用 `archiveSession` 的
-   `{sessionId}` / `{archivedSessionIds}` 形状），宿主流新增
-   `workspace/session-deleted` 监听 → 广播 `host/session-removed`（会话摘要
-   移除帧；归档集与工作区帧由既有 `domain/changed` 通道自动广播）。
+`host.ts` 通过 `/dsh-qol` RPC 通道接管官方 rc.6 缺失的能力：
+`workspace.unarchiveSession`、`workspace.deleteSession`、
+`session.exportJsonl`。删除走完整链路：拒绝运行中会话 → flush →
+移除帧先广播（`host/session-removed`）→ 清归档集 → 摘记账 →
+删日志文件，保证浏览器侧不会短暂看到残留条目。
 
-> **dsh-qol 自己的删除路径**：`/dsh-qol` 的 `workspace.deleteSession` 在
-> 删完文件后，还会（1）从 `sessions` 的 live store 里 detach 该会话实例
-> （触发 `session/disposed` → `host/session-removed`），（2）emit
-> `workspace/session-deleted` 兜底广播。这两步缺一不可：只删文件/记账
-> 会让 live 实例残留在内存里，`session.list` 的 attached 分支继续返回它，
-> 侧栏把它显示在「未分组」——刷新页面也无法消除。
-5. `@deepseek-ai/dsh-client-connection`：值 schema 表、`api.workspace`
-   方法与 fixture 分发各加两项。
-6. `@deepseek-ai/dsh-client-runtime`：`WorkspaceManager` 与 `WorkspaceRuntime`
-   门面新增 `unarchiveSession` / `deleteSession`（成功即安装返回的归档集）。
+`workspaceExport.ts` 注册 `GET /dsh-qol/workspace.export?workspaceId=…`
+路由，用 fflate 流式打包 ZIP：逐个会话 `readRaw`（zstd 解码后的明文），
+同一时刻只持有一个会话的文本，内存占用有界。
+
+### 浏览器半
+
+`client/` 通过 `sidebar.footer.action` 槽注册归档面板；导出菜单项由官方
+补丁派发自定义事件（`dsh-qol:export-session` / `dsh-qol:export-workspace`），
+浏览器半监听后经 RPC 或导航执行下载，失败以 Toast 反馈。
+
+## 运行时补丁
+
+dsh-qol 不修改官方 API 包，只对官方 UI bundle 做两处最小增量补丁
+（无 slot 扩展点，纯插入，不改既有行为）：
+
+| 位置 | 补丁内容 |
+| --- | --- |
+| `dsh-client-ui-workspace` | 会话行菜单插入「导出对话」（分叉与归档之间）；工作区行菜单插入「导出工作区对话」；点击派发对应自定义事件 |
+| `dsh-host-apiproxy` | 宿主流新增 `workspace/session-deleted` 监听 → 广播 `host/session-removed`（会话摘要移除帧） |
 
 补丁同时落在两处（内容一致）：
 
 - **已打包运行时**：`<桌面应用>/resources/app/node_modules/@deepseek-ai/*`
-  （宿主侧改完需重启桌面应用生效；浏览器侧在 Web 产物重建后生效）。
-- **源码 checkout**：`deepseek-harness/packages/*`（重建
-  `pnpm build:lib && pnpm build:web` 后同步 dist 到
-  `@deepseek-ai/dsh-web-frontend/dist`）。
+  （改完重启桌面应用生效；`dsh-client-ui-workspace` 的浏览器 bundle 由
+  `dsh-client-modules` 直接 serve `lib/client.js`，改完重启 DSH 即生效，
+  无需重建 Web 产物）。
+- **源码 checkout**：`deepseek-harness/packages/*`（`Rows.tsx`、
+  `locales.ts`、`api-proxy.ts`）同步修改保持一致。
 
-浏览器侧（connection/runtime/ui 包）编译进前端 bundle，因此仅改
-node_modules 不会让浏览器生效——需要重建 Web 产物（见下）。
-
-**导出菜单项的特殊性**：`dsh-client-ui-workspace` 的浏览器 bundle 由
-`dsh-client-modules` 直接 serve `lib/client.js`（`/plugins/.../client.js`），
-改完重启 DSH 即生效，不需要重建 Web 产物；harness 源码
-（`packages/client/ui-workspace/src/client/rows/Rows.tsx`、`locales.ts`）
-同步修改保持一致。
-
-## 构建与安装
+## 安装与构建
 
 要求 Node `^22.19 || >=24`。
 
@@ -110,19 +98,12 @@ pnpm install
 pnpm build          # tsc（宿主半 lib/index.js）+ tsdown（浏览器 bundle lib/client.js）
 ```
 
-把插件加进 profile（官方流程，同 dsh-silly-tavern）：
+加入 Web profile（官方流程）：
 
 ```bash
 dsh plugin --profile web add <本包绝对路径>
 dsh web             # 重启 Web（DSH_HOME 决定数据目录）
 ```
-
-`dsh-qol` 是一个 bundle：`dsh-client-modules` 只扫描 loader 入口的
-`dsh.client` 声明，所以必须有一行让包进入 loader 图，浏览器 bundle
-（`lib/client.js`）才会被注入 `__DSH_BOOT__` 并在 `/plugins/dsh-qol/client.js`
-伺服。宿主半同时拦截官方 rc.6 没有的 `workspace.unarchiveSession` /
-`workspace.deleteSession`。开发时可用 `pnpm run dev:web` 的 watcher 链
-（宿主侧轮询 bundle 变更）免刷新热更。
 
 ## 开发
 
@@ -132,38 +113,18 @@ pnpm build          # 产出 lib/client.js
 pnpm test           # vitest
 ```
 
-- 浏览器半的 bundle 契约与官方 client 包一致（`window.__ModuleLoader__.load`
+- 浏览器半遵循官方 client bundle 契约（`window.__ModuleLoader__.load`
   闭包工厂 + 平台模块 external，见 `tsdown.config.ts`）。
-- 新增 RPC 由 `src/client/rpc.ts` 以公开的信封协议直接调用（浏览器运行时
-  的预构建 dist 没有这两个客户端方法，也不需要——宿主帧机制会同步状态）。
-
-## 架构
-
-```
-src/
-├── index.ts                 # 包入口（re-export 宿主半 + 类型）
-├── host.ts                  # 宿主半：拦截 unarchive/deleteSession
-├── cordis.patch.yml         # bundle patch：插入宿主插件行
-└── client/
-    ├── index.ts             # 浏览器半入口：字典注册 + sidebar.footer.action 注册
-    ├── ArchivedPanel.tsx    # 归档按钮 + 模态面板（打开 / 恢复 / 删除）
-    ├── ArchivedPanel.module.css
-    ├── locales.ts           # zh / en 文案（qol 命名空间）
-    ├── rpc.ts               # 公开信封协议直调宿主 RPC（unarchive/deleteSession）
-    └── css-modules.d.ts
-```
-
-数据流：`useWorkspaces(archivedSessionIds)` + `useSessions(byId)` 交集合成
-归档行；恢复/删除走 `rpc.ts` → 插件宿主拦截的 `workspace.*` RPC →
-registry 改归档集 / 摘记账 →（删除时）删日志文件 → `domain/changed`
-帧回推，所有列表面自动一致。
+- 新增 RPC 经 `src/client/rpc.ts` 以公开信封协议直调（浏览器运行时无需
+  对应客户端方法，宿主帧机制负责状态同步）。
+- 导出菜单项补丁与 harness 源码保持同步（见上）。
 
 ## 已知限制
 
-- 删除只拒绝**正在运行**的会话（agent 的 turn 进行中，`session-live` /
-  「the session is running」）；闲置会话（哪怕宿主还持有实例）可以直接删。
-  删除不会拆除驻留的 agent 实例——删除后若继续向该会话发消息，会得到
-  「session not found」错误，不会复活文件。
-- 删除是物理删除（日志文件 + 目录），无回收站；面板内两次点击确认。
-- 若 `sessionPersistence` 换成非 JSONL 后端，删除会得到
-  「backend does not support session deletion」错误，恢复仍可用。
+- 删除为物理删除（日志文件 + 目录），无回收站；面板内两步确认防误删。
+- 删除只拒绝**正在运行**的会话；闲置会话可直接删除。删除后若继续向
+  该会话发送消息，会得到「session not found」错误，不会复活文件。
+- 若 `sessionPersistence` 换为非 JSONL 后端，删除会得到
+  「backend does not support session deletion」错误，恢复与导出仍可用。
+- 导出经浏览器保存对话框下载：JS 无法感知下载完成，因此没有成功提示；
+  仅失败时 Toast 报错。
