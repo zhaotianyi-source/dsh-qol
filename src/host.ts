@@ -7,12 +7,12 @@
  */
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { registerWorkspaceExport } from './workspaceExport.ts'
+import { buildWorkspaceZip, workspaceExportDeps } from './workspaceExport.ts'
 
 /** Cordis 插件名（= 包名，loader 行的 name）。 */
 export const name = 'dsh-qol'
@@ -25,6 +25,8 @@ const OWNED_METHODS = new Set([
   'workspace.unarchiveSession',
   'workspace.deleteSession',
   'session.exportJsonl',
+  'export.saveSessionJsonl',
+  'export.saveWorkspaceZip',
   'fs.revealDownload',
 ])
 
@@ -200,6 +202,90 @@ async function exportJsonl(ctx: Context, sessionId: SessionId): Promise<RpcResul
   return { ok: true, value: { filename: artifact.filename, content: artifact.content } }
 }
 
+/** 系统 Downloads 目录（导出文件落盘位置）。 */
+function downloadsDir(): string {
+  return join(homedir(), 'Downloads')
+}
+
+/**
+ * 在 Downloads 里取一个不冲突的路径：已存在同名文件时追加 `-1`、`-2`…
+ * （与浏览器自动改名行为一致）。
+ * @param filename - 期望的文件名。
+ * @returns 实际落盘路径。
+ */
+async function uniqueDownloadPath(filename: string): Promise<string> {
+  const dir = downloadsDir()
+  await mkdir(dir, { recursive: true })
+  const dot = filename.lastIndexOf('.')
+  const stem = dot === -1 ? filename : filename.slice(0, dot)
+  const ext = dot === -1 ? '' : filename.slice(dot)
+  let candidate = join(dir, filename)
+  for (let index = 1; existsSync(candidate); index++) {
+    candidate = join(dir, `${stem}-${index}${ext}`)
+  }
+  return candidate
+}
+
+/** 单会话导出：宿主直接把明文 JSONL 写进 Downloads，写盘完成才算成功。 */
+async function saveSessionJsonl(ctx: Context, sessionId: SessionId): Promise<RpcResult<{ filename: string }>> {
+  const persistence = ctx.get('sessionPersistence') as PersistenceLike
+  if (typeof persistence.readRaw !== 'function') {
+    return {
+      ok: false,
+      error: {
+        code: 'export-unsupported',
+        message: 'this session persistence backend does not expose raw artifacts',
+        details: { sessionId },
+      },
+    }
+  }
+  const artifact = await persistence.readRaw(sessionId)
+  if (artifact === undefined) {
+    return {
+      ok: false,
+      error: {
+        code: 'session-not-found',
+        message: `cannot export session '${sessionId}': no stored session log`,
+        details: { sessionId },
+      },
+    }
+  }
+  const shortId = sessionId.replace(/^session-/, '')
+  const path = await uniqueDownloadPath(`dsh-session-${shortId}.jsonl`)
+  await writeFile(path, artifact.content, 'utf8')
+  return { ok: true, value: { filename: basename(path) } }
+}
+
+/** 工作区导出：宿主打包 ZIP 并写进 Downloads，写盘完成才算成功。 */
+async function saveWorkspaceZip(ctx: Context, workspaceId: string): Promise<RpcResult<{ filename: string }>> {
+  const deps = workspaceExportDeps(ctx)
+  if (deps === undefined) {
+    return {
+      ok: false,
+      error: {
+        code: 'export-unsupported',
+        message: 'workspace export is unavailable: missing persistence or raw-artifact support',
+        details: { workspaceId },
+      },
+    }
+  }
+  try {
+    const { filename, data } = await buildWorkspaceZip(deps, workspaceId)
+    const path = await uniqueDownloadPath(filename)
+    await writeFile(path, data)
+    return { ok: true, value: { filename: basename(path) } }
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: 'export-failed',
+        message: error instanceof Error ? error.message : String(error),
+        details: { workspaceId },
+      },
+    }
+  }
+}
+
 /**
  * 在文件管理器中显示下载目录里的导出文件（Windows 用 explorer /select，
  * 非 Windows 不支持，返回错误让弹窗提示）。
@@ -312,6 +398,16 @@ export function apply(ctx: Context): void {
         }
       }
       if (endpoint === 'fs.revealDownload') return revealDownload(payload)
+      if (endpoint === 'export.saveWorkspaceZip') {
+        const workspaceId = workspaceIdOf(payload)
+        if (workspaceId === undefined) {
+          return {
+            ok: false,
+            error: { code: 'bad-request', message: 'workspaceId is required', details: {} },
+          }
+        }
+        return saveWorkspaceZip(ctx, workspaceId)
+      }
       const sessionId = sessionIdOf(payload)
       if (sessionId === undefined) {
         return {
@@ -325,11 +421,16 @@ export function apply(ctx: Context): void {
       }
       if (endpoint === 'workspace.unarchiveSession') return unarchiveSession(ctx, sessionId)
       if (endpoint === 'session.exportJsonl') return exportJsonl(ctx, sessionId)
+      if (endpoint === 'export.saveSessionJsonl') return saveSessionJsonl(ctx, sessionId)
       return deleteSession(ctx, sessionId)
     },
     { authority: 'loopback' },
   ), 'dsh-qol: workspace session rpc')
+}
 
-  // 工作区级导出：GET /dsh-qol/workspace.export?workspaceId=… → ZIP 流。
-  registerWorkspaceExport(ctx)
+/** 从未知 payload 取出 workspaceId。 */
+function workspaceIdOf(payload: unknown): string | undefined {
+  if (payload === null || typeof payload !== 'object') return undefined
+  const value = (payload as { workspaceId?: unknown }).workspaceId
+  return typeof value === 'string' && value.length > 0 ? value : undefined
 }

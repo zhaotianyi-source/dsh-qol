@@ -3,22 +3,17 @@
  *
  * 官方 ui-workspace 的会话行菜单被补丁插入「导出对话」项（分叉与归档
  * 之间），点击时派发 `dsh-qol:export-session` 自定义事件，detail 为
- * 会话 id。这里监听该事件，经宿主 RPC `session.exportJsonl` 拿到
- * zstd 解码后的明文 JSONL，再以 Blob 触发浏览器下载；失败用 Toast
- * 反馈（挂 body 的轻量 root，不依赖任何面板）。
+ * 会话 id；工作区行菜单另有「导出工作区对话」项，派发
+ * `dsh-qol:export-workspace`（detail 为 workspaceId）。
  *
- * 工作区行菜单另有「导出工作区对话」项，派发 `dsh-qol:export-workspace`
- * （detail 为 workspaceId）：直接把浏览器导航到宿主的
- * `/dsh-qol/workspace.export?workspaceId=…`，由 content-disposition 触发
- * 下载，浏览器原生处理（与官方 session.export 同款），无需 fetch 整个
- * ZIP 进内存。
- *
- * 导出成功后弹一个成功 Modal：显示文件名，提供「打开文件夹」按钮——
- * 经宿主 RPC `fs.revealDownload` 在文件管理器中选中该文件（Windows）。
+ * 导出由**宿主直接写盘**完成（单会话 JSONL 经 `export.saveSessionJsonl`、
+ * 工作区 ZIP 经 `export.saveWorkspaceZip`，都写进系统 Downloads 目录）——
+ * 只有写盘成功（RPC 返回真实文件名）才弹成功 Modal，因此弹窗出现时文件
+ * 一定已在磁盘上。弹窗提供「打开文件夹」按钮，经宿主 RPC
+ * `fs.revealDownload` 在文件管理器中选中该文件（Windows）。
  */
 import { createRoot, type Root } from 'react-dom/client'
 import { Button, Modal, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { callRpc } from './rpc.ts'
 
@@ -28,13 +23,9 @@ export const EXPORT_EVENT = 'dsh-qol:export-session'
 /** 工作区行菜单补丁派发的事件名。 */
 export const EXPORT_WORKSPACE_EVENT = 'dsh-qol:export-workspace'
 
-/** 工作区导出路由（宿主侧注册，GET 流式 ZIP）。 */
-export const WORKSPACE_EXPORT_PATH = '/dsh-qol/workspace.export'
-
-/** 导出 RPC 的返回值。 */
-interface ExportJsonlValue {
+/** 写盘类导出 RPC 的返回值。 */
+interface ExportResult {
   filename: string
-  content: string
 }
 
 let toastRoot: Root | undefined
@@ -109,23 +100,9 @@ function showExportDialog(filename: string, t: TranslateNS<'qol'>): void {
   renderDialog(t)
 }
 
-/** 触发一次浏览器下载（保存一个已就绪的 Blob）。 */
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.click()
-  URL.revokeObjectURL(url)
-}
-
-/** 触发一次浏览器下载（单会话：明文 JSONL）。 */
-function download(content: string, filename: string): void {
-  downloadBlob(new Blob([content], { type: 'application/x-ndjson;charset=utf-8' }), filename)
-}
-
 /**
- * 监听官方补丁派发的导出事件并执行导出。
+ * 监听官方补丁派发的导出事件：宿主把明文 JSONL 写进 Downloads（写盘完成
+ * 才算成功）后弹成功窗；失败走 Toast。
  * @param t - 本插件字典的翻译函数（qol 命名空间）。
  * @returns 取消监听的 disposer。
  */
@@ -133,14 +110,9 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
   const listener = (event: Event): void => {
     const sessionId = (event as CustomEvent).detail
     if (typeof sessionId !== 'string' || sessionId.length === 0) return
-    void callRpc<ExportJsonlValue>('session.exportJsonl', { sessionId })
-      .then(({ content }) => {
-        // sessionId 自带 `session-` 前缀，文件名去掉它，避免 dsh-session-session-… 的重复。
-        const shortId = sessionId.replace(/^session-/, '')
-        const filename = `dsh-session-${shortId}.jsonl`
-        download(content, filename)
-        showExportDialog(filename, t)
-      })
+    showToast(t('export.workspace.start'))
+    void callRpc<ExportResult>('export.saveSessionJsonl', { sessionId })
+      .then(({ filename }) => { showExportDialog(filename, t) })
       .catch((reason: unknown) => {
         const message = reason instanceof Error ? reason.message : String(reason)
         showToast(t('export.error', { message }))
@@ -151,8 +123,8 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
 }
 
 /**
- * 监听官方补丁派发的工作区导出事件：fetch 整个 ZIP，等响应体完整拿到
- * （即文件确实生成完毕）才触发保存并弹成功窗；网络或宿主错误走 Toast。
+ * 监听官方补丁派发的工作区导出事件：宿主打包 ZIP 并写进 Downloads（写盘
+ * 完成才算成功）后弹成功窗；失败走 Toast。
  * @param t - 本插件字典的翻译函数（qol 命名空间）。
  * @returns 取消监听的 disposer。
  */
@@ -160,26 +132,13 @@ export function bindExportWorkspace(t: TranslateNS<'qol'>): () => void {
   const listener = (event: Event): void => {
     const workspaceId = (event as CustomEvent).detail
     if (typeof workspaceId !== 'string' || workspaceId.length === 0) return
-    const url = new URL(WORKSPACE_EXPORT_PATH, window.location.origin)
-    url.searchParams.set('workspaceId', workspaceId)
     showToast(t('export.workspace.start'))
-    void (async () => {
-      try {
-        const response = await fetch(url.toString())
-        if (!response.ok) {
-          const detail = await response.text().catch(() => '')
-          throw new Error(`HTTP ${response.status}${detail === '' ? '' : ` ${detail}`}`)
-        }
-        const blob = await response.blob()
-        if (blob.size === 0) throw new Error('empty archive')
-        const filename = `dsh-workspace-${workspaceId}.zip`
-        downloadBlob(blob, filename)
-        showExportDialog(filename, t)
-      } catch (reason: unknown) {
+    void callRpc<ExportResult>('export.saveWorkspaceZip', { workspaceId })
+      .then(({ filename }) => { showExportDialog(filename, t) })
+      .catch((reason: unknown) => {
         const message = reason instanceof Error ? reason.message : String(reason)
         showToast(t('export.error', { message }))
-      }
-    })()
+      })
   }
   window.addEventListener(EXPORT_WORKSPACE_EVENT, listener)
   return () => { window.removeEventListener(EXPORT_WORKSPACE_EVENT, listener) }
