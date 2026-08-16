@@ -50,7 +50,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     const t = ctx.locale.bind(NS)
     const unbindSession = bindExportSession(t)
-    const unbindWorkspace = bindExportWorkspace(t)
+    const unbindWorkspace = bindExportWorkspace()
     return () => { unbindSession(); unbindWorkspace(); disposeExportToast() }
   }, 'dsh-qol: session/workspace export listener')
 

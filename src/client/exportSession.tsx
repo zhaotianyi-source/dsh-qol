@@ -7,13 +7,13 @@
  * `dsh-qol:export-workspace`（detail 为 workspaceId）。
  *
  * 导出走浏览器下载（用户自选保存位置）：单会话经宿主 RPC
- * `session.exportJsonl` 拿到明文 JSONL 后以 Blob 触发保存；工作区导航到
- * 宿主 GET `/dsh-qol/workspace.export?workspaceId=…`（流式 ZIP，
- * content-disposition 触发保存）。下载一经触发浏览器即接管，JS 拿不到
- * 完成信号，因此弹窗语义为「下载已开始」提示（含文件名），而非成功确认。
+ * `session.exportJsonl` 拿到明文 JSONL 后以 Blob 触发保存（期间 Toast
+ * 「正在导出…」）；工作区导航到宿主 GET
+ * `/dsh-qol/workspace.export?workspaceId=…`（流式 ZIP，content-disposition
+ * 触发保存）。下载一经触发浏览器即接管，不再弹任何提示。
  */
 import { createRoot, type Root } from 'react-dom/client'
-import { Modal, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { callRpc } from './rpc.ts'
 
@@ -36,11 +36,6 @@ let toastRoot: Root | undefined
 let toastHost: HTMLDivElement | undefined
 let toastSeq = 0
 
-let dialogRoot: Root | undefined
-let dialogHost: HTMLDivElement | undefined
-/** 下载提示弹窗的当前文件名（null = 关闭）。 */
-let dialogFilename: string | null = null
-
 /** 挂一个 body 级 Toast（无宿主组件上下文，纯反馈）。 */
 function showToast(text: string): void {
   if (toastHost === undefined) {
@@ -58,32 +53,6 @@ function showToast(text: string): void {
   )
 }
 
-/** 渲染（或关闭）下载提示弹窗。 */
-function renderDialog(t: TranslateNS<'qol'>): void {
-  if (dialogHost === undefined) {
-    dialogHost = document.createElement('div')
-    document.body.appendChild(dialogHost)
-  }
-  if (dialogRoot === undefined) dialogRoot = createRoot(dialogHost)
-  dialogRoot.render(
-    <Modal
-      open={dialogFilename !== null}
-      onClose={() => { dialogFilename = null; renderDialog(t) }}
-      title={t('export.dialog.title')}
-      description={t('export.dialog.description')}
-      closeLabel={t('export.dialog.close')}
-    >
-      <span>{dialogFilename}</span>
-    </Modal>,
-  )
-}
-
-/** 触发下载后弹提示窗（浏览器接管保存，弹窗只说明下载已开始）。 */
-function showDownloadDialog(filename: string, t: TranslateNS<'qol'>): void {
-  dialogFilename = filename
-  renderDialog(t)
-}
-
 /** 触发一次浏览器下载（保存一个已就绪的 Blob）。 */
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
@@ -95,8 +64,8 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 /**
- * 监听官方补丁派发的导出事件：RPC 取明文 JSONL → Blob 触发浏览器保存
- * → 弹「下载已开始」提示；RPC 失败走 Toast。
+ * 监听官方补丁派发的导出事件：RPC 取明文 JSONL → Blob 触发浏览器保存。
+ * 失败走 Toast。
  * @param t - 本插件字典的翻译函数（qol 命名空间）。
  * @returns 取消监听的 disposer。
  */
@@ -111,7 +80,6 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
         const shortId = sessionId.replace(/^session-/, '')
         const filename = `dsh-session-${shortId}.jsonl`
         downloadBlob(new Blob([content], { type: 'application/x-ndjson;charset=utf-8' }), filename)
-        showDownloadDialog(filename, t)
       })
       .catch((reason: unknown) => {
         const message = reason instanceof Error ? reason.message : String(reason)
@@ -123,12 +91,11 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
 }
 
 /**
- * 监听官方补丁派发的工作区导出事件：导航到宿主流式 ZIP 路由（浏览器原生
- * 保存对话框）→ 弹「下载已开始」提示。
- * @param t - 本插件字典的翻译函数（qol 命名空间）。
+ * 监听官方补丁派发的工作区导出事件：导航到宿主流式 ZIP 路由，浏览器原生
+ * 保存对话框接管。
  * @returns 取消监听的 disposer。
  */
-export function bindExportWorkspace(t: TranslateNS<'qol'>): () => void {
+export function bindExportWorkspace(): () => void {
   const listener = (event: Event): void => {
     const workspaceId = (event as CustomEvent).detail
     if (typeof workspaceId !== 'string' || workspaceId.length === 0) return
@@ -138,21 +105,15 @@ export function bindExportWorkspace(t: TranslateNS<'qol'>): () => void {
     anchor.href = url.toString()
     anchor.rel = 'noopener'
     anchor.click()
-    showDownloadDialog(`dsh-workspace-${workspaceId}.zip`, t)
   }
   window.addEventListener(EXPORT_WORKSPACE_EVENT, listener)
   return () => { window.removeEventListener(EXPORT_WORKSPACE_EVENT, listener) }
 }
 
-/** 卸载 Toast / 弹窗 root（插件卸载时由宿主调用）。 */
+/** 卸载 Toast root（插件卸载时由宿主调用）。 */
 export function disposeExportToast(): void {
   toastRoot?.unmount()
   toastRoot = undefined
   toastHost?.remove()
   toastHost = undefined
-  dialogRoot?.unmount()
-  dialogRoot = undefined
-  dialogHost?.remove()
-  dialogHost = undefined
-  dialogFilename = null
 }
