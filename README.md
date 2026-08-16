@@ -23,6 +23,19 @@ registry-global 归档集，从此任何列表面都看不到它——没有归�
   永久删除：会话日志文件 + 工作区记账槽 + 归档集成员资格。运行中的会话
   会被宿主拒绝（`session-live`）。
 
+### 导出对话 JSONL（V2）
+
+会话行 `···` 菜单在「分叉」与「归档」之间新增「导出对话」：把该会话的
+原始日志（`session.jsonl.zstd` 解码后的明文 JSONL，逐字节对应磁盘产物）
+下载为 `dsh-session-<id>.jsonl`。导出走宿主 RPC `session.exportJsonl`，
+复用官方 `SessionPersistence.readRaw`（rc.6 已实现 zstd 解码），无需
+自行解压。
+
+菜单项本身是官方 `dsh-client-ui-workspace` 的一处**最小补丁**（无 slot
+扩展点）：在 `sessionMenuItems` 里插入 export 项，点击时派发
+`dsh-qol:export-session` 自定义事件；dsh-qol 浏览器半监听该事件执行
+RPC + Blob 下载，失败以 Toast 反馈。补丁与源码 checkout 同步（见下）。
+
 ## 前置条件：harness API 扩展（必须）
 
 `unarchiveSession` / `deleteSession` 不在 rc.6 的 RPC 面里，本插件依赖
@@ -59,6 +72,12 @@ harness 侧的一处小补丁（纯增量，不改任何既有行为）：
 
 浏览器侧（connection/runtime/ui 包）编译进前端 bundle，因此仅改
 node_modules 不会让浏览器生效——需要重建 Web 产物（见下）。
+
+**导出菜单项的特殊性**：`dsh-client-ui-workspace` 的浏览器 bundle 由
+`dsh-client-modules` 直接 serve `lib/client.js`（`/plugins/.../client.js`），
+改完重启 DSH 即生效，不需要重建 Web 产物；harness 源码
+（`packages/client/ui-workspace/src/client/rows/Rows.tsx`、`locales.ts`）
+同步修改保持一致。
 
 ## 构建与安装
 

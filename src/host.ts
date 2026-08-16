@@ -1,5 +1,5 @@
 /**
- * dsh-qol 宿主半：在官方 rc.6 上补齐归档恢复 / 永久删除。
+ * dsh-qol 宿主半：在官方 rc.6 上补齐归档恢复 / 永久删除 / 日志导出。
  *
  * 官方 Web 的 `/api` 路由表没有 `workspace.unarchiveSession` /
  * `workspace.deleteSession`，而且 `/api` 拦截器只能挂一个。这里走独立通道
@@ -16,8 +16,12 @@ export const name = 'dsh-qol'
 /** 截获 RPC 前必须等 connection / workspace / persistence 就绪。 */
 export const inject = ['connection', 'workspaceRegistry', 'sessionPersistence'] as const
 
-/** 本插件接管的两个 workspace RPC。 */
-const OWNED_METHODS = new Set(['workspace.unarchiveSession', 'workspace.deleteSession'])
+/** 本插件接管的 workspace RPC 与日志导出。 */
+const OWNED_METHODS = new Set([
+  'workspace.unarchiveSession',
+  'workspace.deleteSession',
+  'session.exportJsonl',
+])
 
 /** 插件元信息：展示名「DSH 体验优化合集」。 */
 export const meta = {
@@ -51,6 +55,8 @@ interface PersistenceLike {
   list(): Promise<readonly { id: SessionId; cwd?: string }[]>
   locate(meta: { id: SessionId; cwd?: string }): { path: string } | undefined
   delete?(sessionId: SessionId): Promise<boolean>
+  /** 读会话原始产物（JSONL 后端返回 zstd 解码后的明文）。 */
+  readRaw?(sessionId: SessionId, signal?: AbortSignal): Promise<{ filename: string; content: string } | undefined>
 }
 
 interface SessionsLike {
@@ -139,6 +145,33 @@ async function deleteSession(ctx: Context, sessionId: SessionId): Promise<RpcRes
   return { ok: true, value: archivedSet(registry) }
 }
 
+/** 导出会话原始日志（JSONL 明文）。 */
+async function exportJsonl(ctx: Context, sessionId: SessionId): Promise<RpcResult<{ filename: string; content: string }>> {
+  const persistence = ctx.get('sessionPersistence') as PersistenceLike
+  if (typeof persistence.readRaw !== 'function') {
+    return {
+      ok: false,
+      error: {
+        code: 'export-unsupported',
+        message: 'this session persistence backend does not expose raw artifacts',
+        details: { sessionId },
+      },
+    }
+  }
+  const artifact = await persistence.readRaw(sessionId)
+  if (artifact === undefined) {
+    return {
+      ok: false,
+      error: {
+        code: 'session-not-found',
+        message: `cannot export session '${sessionId}': no stored session log`,
+        details: { sessionId },
+      },
+    }
+  }
+  return { ok: true, value: { filename: artifact.filename, content: artifact.content } }
+}
+
 /** 会话是否 live / 已持久化。 */
 async function sessionKnown(ctx: Context, sessionId: SessionId): Promise<boolean> {
   const sessions = ctx.get('sessions') as SessionsLike | undefined
@@ -213,6 +246,7 @@ export function apply(ctx: Context): void {
         }
       }
       if (endpoint === 'workspace.unarchiveSession') return unarchiveSession(ctx, sessionId)
+      if (endpoint === 'session.exportJsonl') return exportJsonl(ctx, sessionId)
       return deleteSession(ctx, sessionId)
     },
     { authority: 'loopback' },
