@@ -141,22 +141,11 @@ async function deleteSession(ctx: Context, sessionId: SessionId): Promise<RpcRes
   const live = sessions?.get(sessionId)
   if (live !== undefined && sessions?.flush !== undefined) await sessions.flush(live)
 
-  const keep = registry.archivedSessionIds.filter(id => id !== sessionId)
-  if (keep.length !== registry.archivedSessionIds.length) await writeArchiveSet(registry, keep)
-
-  for (const workspace of registry.list()) {
-    if (workspace.sessionIds.includes(sessionId)) await workspace.detachSession(sessionId)
-  }
-
-  await deletePersisted(persistence, sessionId)
-
-  // 官方删除链路靠 session/disposed（或 workspace/session-deleted）→
-  // host/session-removed 帧把浏览器摘要移除；我们的 /dsh-qol RPC 不走官方
-  // apiproxy，必须自己触发。摘除 live 实例同时解决 host 侧 session.list
-  // 的 live 分支残留（否则刷新页面幽灵复活）。失败不阻断 RPC——界面在
-  // 下次 refresh 时会对齐。
+  // 移除帧必须最先广播：浏览器收到 host/session-removed 后先删摘要，之后
+  // 的归档 / 记账帧只改集合与记账槽，不会把已移除的会话渲染回侧栏。
+  // 若反过来（先清归档集再摘记账），浏览器会短暂看到「归档已解除 + 记账
+  // 仍在」的中间态——会话闪现回原工作区，下一帧才消失。
   try {
-    const sessions = ctx.get('sessions') as SessionsLike | undefined
     const entry = sessions?.store?.get(sessionId)
     if (entry !== undefined) entry.detach()
   } catch {
@@ -167,6 +156,15 @@ async function deleteSession(ctx: Context, sessionId: SessionId): Promise<RpcRes
   } catch {
     // 忽略广播失败
   }
+
+  const keep = registry.archivedSessionIds.filter(id => id !== sessionId)
+  if (keep.length !== registry.archivedSessionIds.length) await writeArchiveSet(registry, keep)
+
+  for (const workspace of registry.list()) {
+    if (workspace.sessionIds.includes(sessionId)) await workspace.detachSession(sessionId)
+  }
+
+  await deletePersisted(persistence, sessionId)
   return { ok: true, value: archivedSet(registry) }
 }
 
