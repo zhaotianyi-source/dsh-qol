@@ -6,14 +6,14 @@
  * 会话 id；工作区行菜单另有「导出工作区对话」项，派发
  * `dsh-qol:export-workspace`（detail 为 workspaceId）。
  *
- * 导出由**宿主直接写盘**完成（单会话 JSONL 经 `export.saveSessionJsonl`、
- * 工作区 ZIP 经 `export.saveWorkspaceZip`，都写进系统 Downloads 目录）——
- * 只有写盘成功（RPC 返回真实文件名）才弹成功 Modal，因此弹窗出现时文件
- * 一定已在磁盘上。弹窗提供「打开文件夹」按钮，经宿主 RPC
- * `fs.revealDownload` 在文件管理器中选中该文件（Windows）。
+ * 导出走浏览器下载（用户自选保存位置）：单会话经宿主 RPC
+ * `session.exportJsonl` 拿到明文 JSONL 后以 Blob 触发保存；工作区导航到
+ * 宿主 GET `/dsh-qol/workspace.export?workspaceId=…`（流式 ZIP，
+ * content-disposition 触发保存）。下载一经触发浏览器即接管，JS 拿不到
+ * 完成信号，因此弹窗语义为「下载已开始」提示（含文件名），而非成功确认。
  */
 import { createRoot, type Root } from 'react-dom/client'
-import { Button, Modal, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Modal, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { callRpc } from './rpc.ts'
 
@@ -23,9 +23,13 @@ export const EXPORT_EVENT = 'dsh-qol:export-session'
 /** 工作区行菜单补丁派发的事件名。 */
 export const EXPORT_WORKSPACE_EVENT = 'dsh-qol:export-workspace'
 
-/** 写盘类导出 RPC 的返回值。 */
-interface ExportResult {
+/** 工作区导出路由（宿主侧注册，GET 流式 ZIP）。 */
+export const WORKSPACE_EXPORT_PATH = '/dsh-qol/workspace.export'
+
+/** 导出 RPC 的返回值。 */
+interface ExportJsonlValue {
   filename: string
+  content: string
 }
 
 let toastRoot: Root | undefined
@@ -34,7 +38,7 @@ let toastSeq = 0
 
 let dialogRoot: Root | undefined
 let dialogHost: HTMLDivElement | undefined
-/** 成功弹窗的当前文件名（null = 关闭）。 */
+/** 下载提示弹窗的当前文件名（null = 关闭）。 */
 let dialogFilename: string | null = null
 
 /** 挂一个 body 级 Toast（无宿主组件上下文，纯反馈）。 */
@@ -54,7 +58,7 @@ function showToast(text: string): void {
   )
 }
 
-/** 渲染（或关闭）导出成功弹窗。 */
+/** 渲染（或关闭）下载提示弹窗。 */
 function renderDialog(t: TranslateNS<'qol'>): void {
   if (dialogHost === undefined) {
     dialogHost = document.createElement('div')
@@ -68,41 +72,31 @@ function renderDialog(t: TranslateNS<'qol'>): void {
       title={t('export.dialog.title')}
       description={t('export.dialog.description')}
       closeLabel={t('export.dialog.close')}
-      footer={(
-        <Button
-          variant="primary"
-          disabled={dialogFilename === null}
-          onClick={() => {
-            const filename = dialogFilename
-            if (filename === null) return
-            void callRpc<{ filename: string }>('fs.revealDownload', { filename })
-              .then(() => { dialogFilename = null; renderDialog(t) })
-              .catch((reason: unknown) => {
-                const message = reason instanceof Error ? reason.message : String(reason)
-                dialogFilename = null
-                renderDialog(t)
-                showToast(t('export.dialog.revealError', { message }))
-              })
-          }}
-        >
-          {t('export.dialog.openFolder')}
-        </Button>
-      )}
     >
       <span>{dialogFilename}</span>
     </Modal>,
   )
 }
 
-/** 导出成功后弹窗（并保留失败 Toast 语义）。 */
-function showExportDialog(filename: string, t: TranslateNS<'qol'>): void {
+/** 触发下载后弹提示窗（浏览器接管保存，弹窗只说明下载已开始）。 */
+function showDownloadDialog(filename: string, t: TranslateNS<'qol'>): void {
   dialogFilename = filename
   renderDialog(t)
 }
 
+/** 触发一次浏览器下载（保存一个已就绪的 Blob）。 */
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 /**
- * 监听官方补丁派发的导出事件：宿主把明文 JSONL 写进 Downloads（写盘完成
- * 才算成功）后弹成功窗；失败走 Toast。
+ * 监听官方补丁派发的导出事件：RPC 取明文 JSONL → Blob 触发浏览器保存
+ * → 弹「下载已开始」提示；RPC 失败走 Toast。
  * @param t - 本插件字典的翻译函数（qol 命名空间）。
  * @returns 取消监听的 disposer。
  */
@@ -111,8 +105,14 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
     const sessionId = (event as CustomEvent).detail
     if (typeof sessionId !== 'string' || sessionId.length === 0) return
     showToast(t('export.workspace.start'))
-    void callRpc<ExportResult>('export.saveSessionJsonl', { sessionId })
-      .then(({ filename }) => { showExportDialog(filename, t) })
+    void callRpc<ExportJsonlValue>('session.exportJsonl', { sessionId })
+      .then(({ content }) => {
+        // sessionId 自带 `session-` 前缀，文件名去掉它，避免 dsh-session-session-… 的重复。
+        const shortId = sessionId.replace(/^session-/, '')
+        const filename = `dsh-session-${shortId}.jsonl`
+        downloadBlob(new Blob([content], { type: 'application/x-ndjson;charset=utf-8' }), filename)
+        showDownloadDialog(filename, t)
+      })
       .catch((reason: unknown) => {
         const message = reason instanceof Error ? reason.message : String(reason)
         showToast(t('export.error', { message }))
@@ -123,8 +123,8 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
 }
 
 /**
- * 监听官方补丁派发的工作区导出事件：宿主打包 ZIP 并写进 Downloads（写盘
- * 完成才算成功）后弹成功窗；失败走 Toast。
+ * 监听官方补丁派发的工作区导出事件：导航到宿主流式 ZIP 路由（浏览器原生
+ * 保存对话框）→ 弹「下载已开始」提示。
  * @param t - 本插件字典的翻译函数（qol 命名空间）。
  * @returns 取消监听的 disposer。
  */
@@ -132,13 +132,13 @@ export function bindExportWorkspace(t: TranslateNS<'qol'>): () => void {
   const listener = (event: Event): void => {
     const workspaceId = (event as CustomEvent).detail
     if (typeof workspaceId !== 'string' || workspaceId.length === 0) return
-    showToast(t('export.workspace.start'))
-    void callRpc<ExportResult>('export.saveWorkspaceZip', { workspaceId })
-      .then(({ filename }) => { showExportDialog(filename, t) })
-      .catch((reason: unknown) => {
-        const message = reason instanceof Error ? reason.message : String(reason)
-        showToast(t('export.error', { message }))
-      })
+    const url = new URL(WORKSPACE_EXPORT_PATH, window.location.origin)
+    url.searchParams.set('workspaceId', workspaceId)
+    const anchor = document.createElement('a')
+    anchor.href = url.toString()
+    anchor.rel = 'noopener'
+    anchor.click()
+    showDownloadDialog(`dsh-workspace-${workspaceId}.zip`, t)
   }
   window.addEventListener(EXPORT_WORKSPACE_EVENT, listener)
   return () => { window.removeEventListener(EXPORT_WORKSPACE_EVENT, listener) }

@@ -31,9 +31,7 @@ export type QolKey =
   | 'export.workspace.start'
   | 'export.dialog.title'
   | 'export.dialog.description'
-  | 'export.dialog.openFolder'
   | 'export.dialog.close'
-  | 'export.dialog.revealError'
 
 export const zh: Record<QolKey, string> = {
   'archived.button': '归档',
@@ -60,12 +58,10 @@ export const zh: Record<QolKey, string> = {
   'archived.close': '关闭',
   'export.success': '已导出对话 JSONL',
   'export.error': '导出失败：{message}',
-  'export.workspace.start': '正在导出工作区对话…',
-  'export.dialog.title': '导出成功',
-  'export.dialog.description': '文件已保存到下载文件夹。',
-  'export.dialog.openFolder': '打开文件夹',
+  'export.workspace.start': '正在导出…',
+  'export.dialog.title': '下载已开始',
+  'export.dialog.description': '浏览器正在下载该文件，请在弹出的保存对话框中选择保存位置。',
   'export.dialog.close': '关闭',
-  'export.dialog.revealError': '无法打开文件夹：{message}',
 }
 
 export const en: Record<QolKey, string> = {
@@ -93,10 +89,8 @@ export const en: Record<QolKey, string> = {
   'archived.close': 'Close',
   'export.success': 'Conversation exported as JSONL',
   'export.error': 'Export failed: {message}',
-  'export.workspace.start': 'Exporting workspace chats…',
-  'export.dialog.title': 'Export complete',
-  'export.dialog.description': 'The file was saved to your Downloads folder.',
-  'export.dialog.openFolder': 'Open folder',
+  'export.workspace.start': 'Exporting…',
+  'export.dialog.title': 'Download started',
+  'export.dialog.description': 'The browser is downloading the file; choose a save location in the dialog.',
   'export.dialog.close': 'Close',
-  'export.dialog.revealError': 'Cannot open folder: {message}',
 }
