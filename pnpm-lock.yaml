@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.1

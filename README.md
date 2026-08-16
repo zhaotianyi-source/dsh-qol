@@ -36,6 +36,21 @@ registry-global 归档集，从此任何列表面都看不到它——没有归�
 `dsh-qol:export-session` 自定义事件；dsh-qol 浏览器半监听该事件执行
 RPC + Blob 下载，失败以 Toast 反馈。补丁与源码 checkout 同步（见下）。
 
+### 导出工作区 ZIP（V3）
+
+工作区行 `···` 菜单新增「导出工作区」：把该工作区记账下所有会话的
+明文 JSONL 打包成一个 ZIP（每个会话一个 `<sessionId>/session.jsonl`
+条目，与官方 session.export 的目录布局一致）流式下发，文件名
+`dsh-workspace-<workspaceId>.zip`。
+
+实现走宿主侧 `webServer` 注册的 GET 路由
+`/dsh-qol/workspace.export?workspaceId=…`（与官方 `/api/session.export`
+同款：`content-disposition` 触发下载，浏览器原生处理，无需把整个 ZIP
+拉进内存）；打包用 fflate 流式 Zip API，同一时刻只持有一个会话的
+artifact 文本。工作区行菜单项同样是官方 `dsh-client-ui-workspace` 的
+最小补丁（`workspaceMenuItems` 插入 export 项 → 派发
+`dsh-qol:export-workspace` 事件 → 浏览器半导航到下载路由）。
+
 ## 前置条件：harness API 扩展（必须）
 
 `unarchiveSession` / `deleteSession` 不在 rc.6 的 RPC 面里，本插件依赖

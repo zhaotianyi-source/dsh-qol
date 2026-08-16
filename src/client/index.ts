@@ -14,7 +14,7 @@ import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/c
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { ArchivedPanel, type ArchivedPanelInjected } from './ArchivedPanel.tsx'
-import { bindExportSession, disposeExportToast } from './exportSession.tsx'
+import { bindExportSession, bindExportWorkspace, disposeExportToast } from './exportSession.tsx'
 import { en, zh, type QolKey } from './locales.ts'
 import { callRpc } from './rpc.ts'
 
@@ -46,12 +46,13 @@ export const inject = ['slots', 'sessions', 'workspaces', 'locale']
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-qol: dictionaries')
 
-  // 导出对话：官方 ui-workspace 补丁只派发事件，这里监听并下载 JSONL。
+  // 导出对话 / 导出工作区：官方 ui-workspace 补丁只派发事件，这里监听并下载。
   ctx.effect(() => {
     const t = ctx.locale.bind(NS)
-    const unbind = bindExportSession(t)
-    return () => { unbind(); disposeExportToast() }
-  }, 'dsh-qol: session export listener')
+    const unbindSession = bindExportSession(t)
+    const unbindWorkspace = bindExportWorkspace(t)
+    return () => { unbindSession(); unbindWorkspace(); disposeExportToast() }
+  }, 'dsh-qol: session/workspace export listener')
 
   const injected = (): ArchivedPanelInjected => ({
     unarchiveSession: async (sessionId) => {

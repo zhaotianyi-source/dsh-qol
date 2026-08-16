@@ -6,6 +6,12 @@
  * 会话 id。这里监听该事件，经宿主 RPC `session.exportJsonl` 拿到
  * zstd 解码后的明文 JSONL，再以 Blob 触发浏览器下载；失败用 Toast
  * 反馈（挂 body 的轻量 root，不依赖任何面板）。
+ *
+ * 工作区行菜单另有「导出工作区」项，派发 `dsh-qol:export-workspace`
+ * （detail 为 workspaceId）：直接把浏览器导航到宿主的
+ * `/dsh-qol/workspace.export?workspaceId=…`，由 content-disposition 触发
+ * 下载，浏览器原生处理（与官方 session.export 同款），无需 fetch 整个
+ * ZIP 进内存。
  */
 import { createRoot, type Root } from 'react-dom/client'
 import { Toast } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -15,6 +21,12 @@ import { callRpc } from './rpc.ts'
 
 /** 会话行菜单补丁派发的事件名。 */
 export const EXPORT_EVENT = 'dsh-qol:export-session'
+
+/** 工作区行菜单补丁派发的事件名。 */
+export const EXPORT_WORKSPACE_EVENT = 'dsh-qol:export-workspace'
+
+/** 工作区导出路由（宿主侧注册，GET 流式 ZIP）。 */
+export const WORKSPACE_EXPORT_PATH = '/dsh-qol/workspace.export'
 
 /** 导出 RPC 的返回值。 */
 interface ExportJsonlValue {
@@ -77,6 +89,27 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
   }
   window.addEventListener(EXPORT_EVENT, listener)
   return () => { window.removeEventListener(EXPORT_EVENT, listener) }
+}
+
+/**
+ * 监听官方补丁派发的工作区导出事件并导航到下载路由。
+ * @param t - 本插件字典的翻译函数（qol 命名空间）。
+ * @returns 取消监听的 disposer。
+ */
+export function bindExportWorkspace(t: TranslateNS<'qol'>): () => void {
+  const listener = (event: Event): void => {
+    const workspaceId = (event as CustomEvent).detail
+    if (typeof workspaceId !== 'string' || workspaceId.length === 0) return
+    const url = new URL(WORKSPACE_EXPORT_PATH, window.location.origin)
+    url.searchParams.set('workspaceId', workspaceId)
+    const anchor = document.createElement('a')
+    anchor.href = url.toString()
+    anchor.rel = 'noopener'
+    anchor.click()
+    showToast(t('export.workspace.start'))
+  }
+  window.addEventListener(EXPORT_WORKSPACE_EVENT, listener)
+  return () => { window.removeEventListener(EXPORT_WORKSPACE_EVENT, listener) }
 }
 
 /** 卸载 Toast root（插件卸载时由宿主调用）。 */

@@ -28,6 +28,7 @@ export type QolKey =
   | 'archived.close'
   | 'export.success'
   | 'export.error'
+  | 'export.workspace.start'
 
 export const zh: Record<QolKey, string> = {
   'archived.button': '归档',
@@ -54,6 +55,7 @@ export const zh: Record<QolKey, string> = {
   'archived.close': '关闭',
   'export.success': '已导出对话 JSONL',
   'export.error': '导出失败：{message}',
+  'export.workspace.start': '正在导出工作区…',
 }
 
 export const en: Record<QolKey, string> = {
@@ -81,4 +83,5 @@ export const en: Record<QolKey, string> = {
   'archived.close': 'Close',
   'export.success': 'Conversation exported as JSONL',
   'export.error': 'Export failed: {message}',
+  'export.workspace.start': 'Exporting workspace…',
 }

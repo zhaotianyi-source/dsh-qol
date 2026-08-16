@@ -9,12 +9,13 @@ import { rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import { registerWorkspaceExport } from './workspaceExport.ts'
 
 /** Cordis 插件名（= 包名，loader 行的 name）。 */
 export const name = 'dsh-qol'
 
-/** 截获 RPC 前必须等 connection / workspace / persistence 就绪。 */
-export const inject = ['connection', 'workspaceRegistry', 'sessionPersistence'] as const
+/** 截获 RPC 前必须等 connection / workspace / persistence / webServer 就绪。 */
+export const inject = ['connection', 'workspaceRegistry', 'sessionPersistence', 'webServer'] as const
 
 /** 本插件接管的 workspace RPC 与日志导出。 */
 const OWNED_METHODS = new Set([
@@ -274,4 +275,7 @@ export function apply(ctx: Context): void {
     },
     { authority: 'loopback' },
   ), 'dsh-qol: workspace session rpc')
+
+  // 工作区级导出：GET /dsh-qol/workspace.export?workspaceId=… → ZIP 流。
+  registerWorkspaceExport(ctx)
 }
