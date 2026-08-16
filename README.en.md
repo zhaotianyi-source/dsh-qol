@@ -131,6 +131,33 @@ pnpm test           # vitest
   host frame delivery keeps state in sync).
 - Keep the export menu-item patches in sync with the harness checkout
   (see above).
+- Feedback toasts follow the official pattern: a `shell.overlay` slot
+  component renders the framework `Toast` primitive via internal
+  `useState` (precedent: ui-model-selection's ModelSelect) — no hand-rolled
+  `createRoot` or manual DOM mounting.
+
+## Testing
+
+```bash
+pnpm test           # vitest (node environment + jsdom pragma for specs)
+```
+
+- `test/ops.test.ts`: host-half pure logic (restore / delete / export)
+  driven by fake services — running-session rejection, unknown session,
+  frame ordering (removal frame before archive/accounting writes), backend
+  delete fallback.
+- `test/workspace-export.test.ts`: ZIP packing (fflate unzip asserts entry
+  layout), missing-log skip, unknown workspace, path-segment sanitization.
+- `test/archived-panel.test.tsx`: component specs (jsdom +
+  @testing-library/react), props-fed, asserting visible behavior: button,
+  empty state, listing, restore, two-step delete, error banner.
+- `test/rpc.test.ts`: envelope shape, business errors, HTTP 404 mapping,
+  transport failure.
+- `test/locales.test.ts`: zh / en dictionary key parity.
+
+Component specs use react 18 (matching the official rc.6 packages' peer);
+these devDeps do not affect the runtime — react is a platform module in the
+browser, provided by the loader table.
 
 ## Known Limitations
 
@@ -145,3 +172,31 @@ pnpm test           # vitest
 - Exports go through the browser save dialog: JavaScript cannot observe
   download completion, so there is no success notice; only failures
   surface as toasts.
+
+## Model Experience
+
+This plugin is pure UI / host orchestration; it injects nothing into the
+model context.
+
+### Request context and condition
+
+Not applicable: no system-prompt contribution, no request-context rewrite.
+
+#### What the model sees
+
+Unchanged.
+
+#### Token effect
+
+Zero direct token effect.
+
+#### KV Cache effect
+
+Not applicable: no prefix is generated or rewritten.
+
+## Known Limitations and Deferred Work
+
+See "Known Limitations" above. The export menu items depend on minimal
+patches to the official `dsh-client-ui-workspace` (no slot extension points
+exist); if the official client later adds row-menu slots, migrate to them to
+drop the patches.

@@ -9,12 +9,13 @@
  * session-removed / workspace-changed）。
  */
 import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only: 拉入 locale 与 sidebar 的 Context/SlotMap 合并，使 slots 注入
-// 与 LocaleNamespaceMap 声明在编译期可见。
+// Type-only: 拉入 locale / sidebar / layout 的 Context/SlotMap 合并，使 slots
+// 注入与 LocaleNamespaceMap 声明在编译期可见。
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { ArchivedPanel, type ArchivedPanelInjected } from './ArchivedPanel.tsx'
-import { bindExportSession, bindExportWorkspace, disposeExportToast } from './exportSession.tsx'
+import { ExportFeedbackHost } from './exportSession.tsx'
 import { en, zh, type QolKey } from './locales.ts'
 import { callRpc } from './rpc.ts'
 
@@ -46,14 +47,6 @@ export const inject = ['slots', 'sessions', 'workspaces', 'locale']
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-qol: dictionaries')
 
-  // 导出对话 / 导出工作区：官方 ui-workspace 补丁只派发事件，这里监听并下载。
-  ctx.effect(() => {
-    const t = ctx.locale.bind(NS)
-    const unbindSession = bindExportSession(t)
-    const unbindWorkspace = bindExportWorkspace()
-    return () => { unbindSession(); unbindWorkspace(); disposeExportToast() }
-  }, 'dsh-qol: session/workspace export listener')
-
   const injected = (): ArchivedPanelInjected => ({
     unarchiveSession: async (sessionId) => {
       await callRpc<ArchivedSetValue>('workspace.unarchiveSession', { sessionId })
@@ -74,5 +67,18 @@ export function apply(ctx: ClientContext): void {
       registrant: 'dsh-qol',
     },
     ArchivedPanel,
+  ))
+
+  // 导出反馈宿主：官方 ui-workspace 补丁只派发事件，导出逻辑与失败 Toast
+  // 渲染都在 shell.overlay 的组件里（官方 primitives Toast + 组件内 state）。
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register(
+    {
+      name: 'shell.overlay',
+      id: 'dsh-qol.export-feedback',
+      order: 100,
+      locale: NS,
+      registrant: 'dsh-qol',
+    },
+    ExportFeedbackHost,
   ))
 }

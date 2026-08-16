@@ -55,22 +55,48 @@ function exportDeps(ctx: Context): {
 }
 
 /** 会话 id 转 zip 路径段（与官方 safeSessionIdSegment 同规则）。 */
-function safeSegment(id: string): string {
+export function safeSegment(id: string): string {
   return id.replace(/[^A-Za-z0-9_-]/g, '_')
 }
 
-/** 一次写一个 zip 条目：readRaw → ZipDeflate 流式压入。 */
-async function pushSessionEntry(
-  zip: Zip,
-  sessionId: SessionId,
+/**
+ * 打包一个工作区的全部会话日志为一个 ZIP Buffer（纯函数，可单测）。
+ * 条目路径 `<sessionId>/session.jsonl`；记账存在但日志缺失的会话跳过。
+ * @param registry - workspace registry（实体的 id 字段是 `id`）。
+ * @param persistence - JSONL persistence（readRaw 返回 zstd 解码后的明文）。
+ * @param workspaceId - 目标工作区 id。
+ * @returns ZIP 字节。
+ * @throws 工作区不存在。
+ */
+export async function buildWorkspaceZip(
+  registry: ExportRegistryLike,
   persistence: ExportPersistenceLike,
-): Promise<void> {
-  const artifact = await persistence.readRaw(sessionId)
-  if (artifact === undefined) return // 记账存在但日志缺失（理论上不该发生），跳过而不是让整个包失败
-  const deflate = new ZipDeflate(`${safeSegment(sessionId)}/session.jsonl`, { level: 6 })
-  zip.add(deflate)
-  // fflate 的 ZipDeflate.push 返回 Promise，await 保证字节顺序与背压。
-  await deflate.push(new TextEncoder().encode(artifact.content), true)
+  workspaceId: string,
+): Promise<Uint8Array> {
+  const workspace = registry.list().find(candidate => candidate.id === workspaceId)
+  if (workspace === undefined) throw new Error(`workspace "${workspaceId}" not found`)
+  const chunks: Uint8Array[] = []
+  const zip = new Zip((error, data) => {
+    // fflate 成功回调的 error 是 null（不是 undefined），只有非空才算错。
+    if (error !== null && error !== undefined) return
+    if (data.byteLength > 0) chunks.push(data)
+  })
+  for (const sessionId of workspace.sessionIds) {
+    const artifact = await persistence.readRaw(sessionId)
+    if (artifact === undefined) continue
+    const deflate = new ZipDeflate(`${safeSegment(sessionId)}/session.jsonl`, { level: 6 })
+    zip.add(deflate)
+    await deflate.push(new TextEncoder().encode(artifact.content), true)
+  }
+  zip.end()
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
+  const data = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    data.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return data
 }
 
 /**
@@ -95,8 +121,8 @@ export function registerWorkspaceExport(ctx: Context): void {
       }
       const url = new URL(req.url ?? '/', 'http://dsh.internal')
       const workspaceId = url.searchParams.get('workspaceId') ?? ''
-      const workspace = deps.registry.list().find(candidate => candidate.id === workspaceId)
-      if (workspace === undefined) {
+      const exists = deps.registry.list().some(candidate => candidate.id === workspaceId)
+      if (!exists) {
         res.writeHead(404)
         res.end('workspace not found')
         return
@@ -112,16 +138,8 @@ export function registerWorkspaceExport(ctx: Context): void {
         return
       }
       try {
-        const zip = new Zip((error, data, final) => {
-          // fflate 成功回调的 error 是 null（不是 undefined），只有非空才算错。
-          if (error !== null && error !== undefined) return
-          if (data.byteLength > 0) res.write(data)
-          if (final) res.end()
-        })
-        for (const sessionId of workspace.sessionIds) {
-          await pushSessionEntry(zip, sessionId, deps.persistence)
-        }
-        zip.end()
+        const data = await buildWorkspaceZip(deps.registry, deps.persistence, workspaceId)
+        res.end(Buffer.from(data))
       } catch (error) {
         // 中途失败必须让浏览器侧拿到错误，而不是半截 zip。
         if (!res.headersSent) {

@@ -118,6 +118,27 @@ pnpm test           # vitest
 - 新增 RPC 经 `src/client/rpc.ts` 以公开信封协议直调（浏览器运行时无需
   对应客户端方法，宿主帧机制负责状态同步）。
 - 导出菜单项补丁与 harness 源码保持同步（见上）。
+- 反馈 Toast 遵循官方模式：`shell.overlay` 槽组件内部 `useState` 渲染
+  框架 primitives（先例：ui-model-selection 的 ModelSelect），不手写
+  `createRoot` / 手动挂 DOM。
+
+## 测试
+
+```bash
+pnpm test           # vitest（node 环境 + 组件 spec 的 jsdom pragma）
+```
+
+- `test/ops.test.ts`：宿主半纯逻辑（恢复 / 删除 / 导出），假服务对象驱动，
+  覆盖运行中拒绝、未知会话、帧顺序（移除帧先于归档 / 记账）、后端删兜底。
+- `test/workspace-export.test.ts`：ZIP 打包（fflate 解包验证条目布局）、
+  缺失日志跳过、未知工作区、路径段消毒。
+- `test/archived-panel.test.tsx`：组件 spec（jsdom + @testing-library/react），
+  props 直喂断言可见行为：按钮、空态、列表、恢复、两步删除、错误横幅。
+- `test/rpc.test.ts`：信封协议形状、业务错误、HTTP 404 映射、传输失败。
+- `test/locales.test.ts`：zh / en 字典键对等。
+
+组件 spec 需要 react 18（与官方 rc.6 包的 peer 一致）；测试专用 devDeps
+不影响运行时——react 在浏览器侧是平台模块，由 loader 表提供。
 
 ## 已知限制
 
@@ -128,3 +149,28 @@ pnpm test           # vitest
   「backend does not support session deletion」错误，恢复与导出仍可用。
 - 导出经浏览器保存对话框下载：JS 无法感知下载完成，因此没有成功提示；
   仅失败时 Toast 报错。
+
+## Model Experience
+
+本插件是纯 UI / 宿主编排插件，不向模型上下文注入任何内容。
+
+### Request context and condition
+
+不适用：无系统提示词贡献，无请求上下文改写。
+
+#### What the model sees
+
+无变化。
+
+#### Token effect
+
+零直接 token 影响。
+
+#### KV Cache effect
+
+不适用：不生成或改写任何前缀。
+
+## Known Limitations and Deferred Work
+
+见上方「已知限制」。导出菜单项依赖官方 `dsh-client-ui-workspace` 的最小
+补丁（无 slot 扩展点）；若官方未来为行菜单提供 slot，应迁移以移除补丁。
