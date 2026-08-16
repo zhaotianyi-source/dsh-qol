@@ -1,0 +1,10 @@
+# dsh-qol bundle patch: host row + browser client.
+#
+# The loader mounts the package as a profile layer so `dsh-client-modules`
+# scans its `dsh.client` declaration and serves the browser bundle
+# (`/plugins/dsh-qol/client.js`). The host half intercepts
+# workspace.unarchiveSession / workspace.deleteSession on official rc.6.
+
+- insert:
+    - id: dsh-qol
+      name: 'dsh-qol'
