@@ -5,8 +5,11 @@
  * `workspace.deleteSession`，而且 `/api` 拦截器只能挂一个。这里走独立通道
  * `/dsh-qol`，直接改 workspace registry + persistence。
  */
+import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { registerWorkspaceExport } from './workspaceExport.ts'
@@ -22,6 +25,7 @@ const OWNED_METHODS = new Set([
   'workspace.unarchiveSession',
   'workspace.deleteSession',
   'session.exportJsonl',
+  'fs.revealDownload',
 ])
 
 /** 插件元信息：展示名「DSH 体验优化合集」。 */
@@ -196,6 +200,55 @@ async function exportJsonl(ctx: Context, sessionId: SessionId): Promise<RpcResul
   return { ok: true, value: { filename: artifact.filename, content: artifact.content } }
 }
 
+/**
+ * 在文件管理器中显示下载目录里的导出文件（Windows 用 explorer /select，
+ * 非 Windows 不支持，返回错误让弹窗提示）。
+ */
+function revealDownload(payload: unknown): RpcResult<{ filename: string }> {
+  const raw = (payload as { filename?: unknown } | null)?.filename
+  const filename = typeof raw === 'string' && raw.length > 0 ? raw : undefined
+  if (filename === undefined) {
+    return {
+      ok: false,
+      error: { code: 'bad-request', message: 'filename is required', details: {} },
+    }
+  }
+  // 只接受本插件的导出命名（dsh-session-<id>.jsonl / dsh-workspace-<id>.zip），
+  // 挡住路径穿越与任意文件选择。
+  if (!/^dsh-(session|workspace)-[A-Za-z0-9_-]+\.(jsonl|zip)$/.test(filename)) {
+    return {
+      ok: false,
+      error: { code: 'bad-request', message: `unsafe export filename "${filename}"`, details: {} },
+    }
+  }
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      error: {
+        code: 'unsupported-platform',
+        message: 'reveal-in-folder is only implemented on Windows',
+        details: {},
+      },
+    }
+  }
+  const downloads = join(homedir(), 'Downloads')
+  const target = join(downloads, filename)
+  if (!existsSync(target)) {
+    return {
+      ok: false,
+      error: {
+        code: 'file-not-found',
+        message: `exported file not found in Downloads: ${filename}`,
+        details: { filename },
+      },
+    }
+  }
+  // explorer.exe /select 是异步的，spawn + unref 让宿主不等待资源管理器退出。
+  const child = spawn('explorer.exe', [`/select,${target}`], { stdio: 'ignore', detached: true })
+  child.unref()
+  return { ok: true, value: { filename } }
+}
+
 /** 会话是否 live / 已持久化。 */
 async function sessionKnown(ctx: Context, sessionId: SessionId): Promise<boolean> {
   const sessions = ctx.get('sessions') as SessionsLike | undefined
@@ -258,6 +311,7 @@ export function apply(ctx: Context): void {
           error: { code: 'not-found', message: `unknown method ${endpoint}`, details: {} },
         }
       }
+      if (endpoint === 'fs.revealDownload') return revealDownload(payload)
       const sessionId = sessionIdOf(payload)
       if (sessionId === undefined) {
         return {
