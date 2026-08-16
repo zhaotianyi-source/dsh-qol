@@ -65,7 +65,9 @@ export function bindExportSession(t: TranslateNS<'qol'>): () => void {
     if (typeof sessionId !== 'string' || sessionId.length === 0) return
     void callRpc<ExportJsonlValue>('session.exportJsonl', { sessionId })
       .then(({ content }) => {
-        download(content, `dsh-session-${sessionId}.jsonl`)
+        // sessionId 自带 `session-` 前缀，文件名去掉它，避免 dsh-session-session-… 的重复。
+        const shortId = sessionId.replace(/^session-/, '')
+        download(content, `dsh-session-${shortId}.jsonl`)
         showToast(t('export.success'))
       })
       .catch((reason: unknown) => {
